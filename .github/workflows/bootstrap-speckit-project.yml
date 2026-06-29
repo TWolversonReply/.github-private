@@ -62,11 +62,18 @@ jobs:
         run: |
           gh repo create "${{ env.ORG }}/${{ inputs.repo_name }}" \
             --${{ inputs.visibility }} \
-            --description "${{ inputs.project_intro }}" \
-            --clone
+            --description "${{ inputs.project_intro }}"
+
+          git clone "https://x-access-token:${GH_TOKEN}@github.com/${{ env.ORG }}/${{ inputs.repo_name }}.git"
           cd "${{ inputs.repo_name }}"
+          git checkout -b main
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Create initial commit so main branch exists
+          echo "# ${{ inputs.repo_name }}" > README.md
+          git add README.md
+          git commit -m "Initial commit"
 
       - name: Install spec-kit CLI
         run: |
