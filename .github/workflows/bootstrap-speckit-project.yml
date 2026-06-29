@@ -1,0 +1,335 @@
+name: Bootstrap Spec-Kit Project
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_name:
+        description: "Repository name (e.g. contoso-integration-migration)"
+        required: true
+        type: string
+      customer_name:
+        description: "Customer name (e.g. Contoso University)"
+        required: true
+        type: string
+      project_intro:
+        description: "One-line project description"
+        required: true
+        type: string
+      brand_primary_colour:
+        description: "Primary brand hex colour (e.g. #0055b8)"
+        required: false
+        default: "#0055b8"
+        type: string
+      brand_header_colour:
+        description: "Header/footer dark colour (e.g. #1a1a2e)"
+        required: false
+        default: "#1a1a2e"
+        type: string
+      visibility:
+        description: "Repository visibility"
+        required: true
+        type: choice
+        options:
+          - public
+          - private
+
+permissions:
+  contents: read
+
+jobs:
+  create-project:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.PROJECT_BOOTSTRAP_PAT }}
+      ORG: TWolversonReply
+    steps:
+      - name: Validate inputs
+        run: |
+          if [[ ! "${{ inputs.repo_name }}" =~ ^[a-z0-9][a-z0-9._-]*$ ]]; then
+            echo "::error::Repository name must be lowercase alphanumeric with hyphens/dots/underscores"
+            exit 1
+          fi
+          if [[ ! "${{ inputs.brand_primary_colour }}" =~ ^#[0-9a-fA-F]{6}$ ]]; then
+            echo "::error::Primary colour must be a valid hex colour (e.g. #0055b8)"
+            exit 1
+          fi
+          if [[ ! "${{ inputs.brand_header_colour }}" =~ ^#[0-9a-fA-F]{6}$ ]]; then
+            echo "::error::Header colour must be a valid hex colour (e.g. #1a1a2e)"
+            exit 1
+          fi
+
+      - name: Create repository
+        run: |
+          gh repo create "${{ env.ORG }}/${{ inputs.repo_name }}" \
+            --${{ inputs.visibility }} \
+            --description "${{ inputs.project_intro }}" \
+            --clone
+          cd "${{ inputs.repo_name }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install spec-kit CLI
+        run: |
+          pip install uv
+          uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0.9.5
+
+      - name: Initialise spec-kit
+        working-directory: ${{ inputs.repo_name }}
+        run: |
+          echo "" | specify init --here --integration copilot --force --no-git --script sh
+
+      - name: Create MkDocs configuration
+        working-directory: ${{ inputs.repo_name }}
+        run: |
+          cat > mkdocs.yml << 'EOF'
+          site_name: $SITE_NAME
+          site_url: https://$ORG_LOWER.github.io/$REPO_NAME/
+          repo_url: https://github.com/$ORG/$REPO_NAME
+
+          theme:
+            name: material
+            custom_dir: overrides
+            font:
+              text: Poppins
+              code: Roboto Mono
+            palette:
+              scheme: valorem
+              primary: custom
+              accent: custom
+            features:
+              - navigation.sections
+              - navigation.expand
+              - toc.integrate
+
+          docs_dir: _build/docs
+
+          markdown_extensions:
+            - toc:
+                permalink: true
+            - admonition
+            - pymdownx.highlight
+            - pymdownx.superfences
+
+          plugins:
+            - search
+
+          extra_css:
+            - stylesheets/extra.css
+          EOF
+
+          # Substitute variables
+          ORG_LOWER=$(echo "${{ env.ORG }}" | tr '[:upper:]' '[:lower:]')
+          sed -i "s|\$SITE_NAME|${{ inputs.repo_name }}|g" mkdocs.yml
+          sed -i "s|\$ORG_LOWER|${ORG_LOWER}|g" mkdocs.yml
+          sed -i "s|\$REPO_NAME|${{ inputs.repo_name }}|g" mkdocs.yml
+          sed -i "s|\$ORG|${{ env.ORG }}|g" mkdocs.yml
+
+      - name: Create theme override (auto-refresh)
+        working-directory: ${{ inputs.repo_name }}
+        run: |
+          mkdir -p overrides
+          cat > overrides/main.html << 'EOF'
+          {% extends "base.html" %}
+
+          {% block extrahead %}
+            <meta http-equiv="refresh" content="5">
+          {% endblock %}
+          EOF
+
+      - name: Create custom stylesheet
+        working-directory: ${{ inputs.repo_name }}
+        run: |
+          mkdir -p docs_assets/stylesheets
+          PRIMARY="${{ inputs.brand_primary_colour }}"
+          HEADER="${{ inputs.brand_header_colour }}"
+
+          cat > docs_assets/stylesheets/extra.css << EOF
+          :root {
+            --md-primary-fg-color: ${PRIMARY};
+            --md-primary-fg-color--light: ${PRIMARY}cc;
+            --md-primary-fg-color--dark: ${PRIMARY};
+            --md-accent-fg-color: ${PRIMARY};
+            --md-default-bg-color: #ffffff;
+            --md-default-fg-color: #333333;
+          }
+
+          [data-md-color-scheme="valorem"] {
+            --md-primary-fg-color: ${PRIMARY};
+            --md-primary-fg-color--light: ${PRIMARY}cc;
+            --md-primary-fg-color--dark: ${PRIMARY};
+            --md-accent-fg-color: ${PRIMARY};
+            --md-typeset-a-color: ${PRIMARY};
+          }
+
+          .md-header {
+            background-color: ${HEADER};
+          }
+
+          .md-nav__link:hover,
+          .md-nav__link--active {
+            color: ${PRIMARY};
+          }
+
+          .md-typeset a { color: ${PRIMARY}; }
+          .md-typeset a:hover { opacity: 0.8; }
+
+          .md-typeset h1,
+          .md-typeset h2,
+          .md-typeset h3 {
+            color: ${HEADER};
+            font-weight: 600;
+          }
+
+          .md-typeset table:not([class]) th {
+            background-color: ${PRIMARY};
+            color: #ffffff;
+          }
+
+          .md-footer {
+            background-color: ${HEADER};
+          }
+
+          .md-typeset .admonition,
+          .md-typeset details {
+            border-radius: 10px;
+          }
+
+          .md-typeset code { border-radius: 5px; }
+          .md-search__input { border-radius: 10px; }
+          EOF
+
+      - name: Create index page
+        working-directory: ${{ inputs.repo_name }}
+        run: |
+          cat > index.md << EOF
+          # ${{ inputs.customer_name }}
+
+          ${{ inputs.project_intro }}
+
+          *This page auto-refreshes every 5 seconds.*
+
+          ## Documentation
+
+          - [Constitution](constitution/index.md)
+          EOF
+
+      - name: Create GitHub Pages workflow
+        working-directory: ${{ inputs.repo_name }}
+        run: |
+          mkdir -p .github/workflows
+          cat > .github/workflows/deploy-pages.yml << 'EOF'
+          name: Deploy MkDocs to GitHub Pages
+
+          on:
+            push:
+              branches: [main]
+            workflow_dispatch:
+
+          permissions:
+            contents: read
+            pages: write
+            id-token: write
+
+          concurrency:
+            group: "pages"
+            cancel-in-progress: true
+
+          jobs:
+            build:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: actions/checkout@v4
+
+                - uses: actions/setup-python@v5
+                  with:
+                    python-version: "3.12"
+
+                - name: Install MkDocs
+                  run: pip install mkdocs-material
+
+                - name: Assemble docs
+                  run: |
+                    mkdir -p _build/docs
+
+                    cp index.md _build/docs/index.md
+                    cp -r docs_assets/* _build/docs/
+
+                    mkdir -p _build/docs/constitution
+                    cp .specify/memory/constitution.md _build/docs/constitution/index.md
+
+                    if [ -d specs ]; then
+                      cp -r specs _build/docs/specs
+                    fi
+
+                - name: Build MkDocs site
+                  run: mkdocs build --strict
+
+                - uses: actions/upload-pages-artifact@v3
+                  with:
+                    path: site
+
+            deploy:
+              needs: build
+              runs-on: ubuntu-latest
+              environment:
+                name: github-pages
+                url: ${{ steps.deployment.outputs.page_url }}
+              steps:
+                - id: deployment
+                  uses: actions/deploy-pages@v4
+          EOF
+
+      - name: Create .gitignore
+        working-directory: ${{ inputs.repo_name }}
+        run: |
+          cat > .gitignore << 'EOF'
+          # MkDocs build output
+          _build/
+          site/
+
+          # Environment
+          .env
+          node_modules/
+          __pycache__/
+          EOF
+
+      - name: Commit and push
+        working-directory: ${{ inputs.repo_name }}
+        run: |
+          git add -A
+          git commit -m "feat: bootstrap spec-kit project with MkDocs Pages
+
+          Customer: ${{ inputs.customer_name }}
+          Generated by: Bootstrap Spec-Kit Project workflow
+
+          Co-authored-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>"
+          git push origin main
+
+      - name: Enable GitHub Pages
+        run: |
+          # Enable Pages with Actions source
+          gh api repos/${{ env.ORG }}/${{ inputs.repo_name }}/pages \
+            -X POST \
+            --field build_type=workflow \
+            --field source[branch]=main \
+            --field source[path]="/" || \
+          gh api repos/${{ env.ORG }}/${{ inputs.repo_name }}/pages \
+            -X PUT \
+            --input <(echo '{"build_type":"workflow","source":{"branch":"main","path":"/"}}')
+
+      - name: Output summary
+        run: |
+          ORG_LOWER=$(echo "${{ env.ORG }}" | tr '[:upper:]' '[:lower:]')
+          echo "## ✅ Project Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Repository** | [${{ env.ORG }}/${{ inputs.repo_name }}](https://github.com/${{ env.ORG }}/${{ inputs.repo_name }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Pages URL** | https://${ORG_LOWER}.github.io/${{ inputs.repo_name }}/ |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Customer** | ${{ inputs.customer_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Description** | ${{ inputs.project_intro }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Clone the repo and run \`/speckit.constitution\` to establish project principles" >> $GITHUB_STEP_SUMMARY
+          echo "2. Run \`/speckit.specify\` to create your first feature specification" >> $GITHUB_STEP_SUMMARY
+          echo "3. Share the Pages URL with stakeholders for live documentation" >> $GITHUB_STEP_SUMMARY
